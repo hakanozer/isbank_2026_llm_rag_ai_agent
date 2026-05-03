@@ -1,0 +1,32 @@
+# Sanal ortam
+.venv/
+venv/
+env/
+
+# Ortam değişkenleri (güvenlik: asla commit etme)
+# .env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# VS Code ayarları
+# .vscode/settings.json
+
+# Jupyter Notebooks checkpoint
+.ipynb_checkpoints/
+
+# FAISS index (büyük dosyalar)
+vector_store/*.index
+vector_store/*.faiss
+
+# Test çıktıları
+.pytest_cache/
+htmlcov/
+.coverage
