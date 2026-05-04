@@ -1,0 +1,40 @@
+services:
+  # PostgreSQL veritabanı
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_commerce_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aicommerce
+      POSTGRES_PASSWORD: changeme123
+      POSTGRES_DB: aicommerce_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aicommerce -d aicommerce_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin — Web tabanlı veritabanı yönetim arayüzü
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: ai_commerce_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@aicommerce.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  postgres_data:
+  pgadmin_data:
