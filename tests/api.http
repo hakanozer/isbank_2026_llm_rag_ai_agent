@@ -7,8 +7,8 @@ GET http://localhost:8000/api/v1/health
 ### Ürün sorgusu
 POST http://localhost:8000/api/v1/query
 Content-Type: application/json
-
 {
   "query": "1000 TL altı terletmeyen yazlık spor ayakkabı",
   "max_results": 5
 }
+
