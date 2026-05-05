@@ -43,7 +43,7 @@ class EmbeddingService:
             convert_to_numpy=True
         )
 
-        # 🔥 FAISS SAFE FORMAT
+        # Ensure safe numeric format for downstream vector stores
         vector = np.array(vector, dtype=np.float32)
         vector = np.ascontiguousarray(vector)
 

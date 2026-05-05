@@ -1,17 +1,38 @@
 """
-API route'ları — Modül 3 güncellemesi: DB sağlık kontrolü eklendi.
+API route'ları — Modül 4: RAG pipeline entegre edildi.
 """
-from fastapi import APIRouter, Depends, HTTPException  # FastAPI bileşenleri
+from fastapi import APIRouter, Depends, HTTPException, logger  # FastAPI bileşenleri
+from pydantic import BaseModel  # Veri şeması ve validasyon için
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text  # SQLAlchemy ORM bileşenleri
 import httpx  # Asenkron HTTP istemcisi
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.llm.intent_detector import intent_detector
-from app.schemas.intent import IntentResult
+from app.rag.pipeline import rag_pipeline
+from app.rag.vector_store import vector_store
 
 router = APIRouter()  # API yönlendirici oluşturur
+
+
+class QueryRequest(BaseModel):  # Kullanıcı sorgu isteği şeması
+    query: str
+    max_results: int = 5
+
+
+class ProductResult(BaseModel):
+    product_id: str
+    name: str
+    brand: str
+    price: float
+    similarity_score: float
+
+
+class QueryResponse(BaseModel):  # Sorgu yanıt şeması
+    answer: str
+    intent: str
+    products: list[ProductResult]
+    total_found: int
 
 
 @router.get("/health", tags=["health"])  # GET route endpoint
@@ -43,19 +64,43 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
     }
 
 
-@router.post("/query", response_model=IntentResult, tags=["assistant"])  # POST route endpoint
+@router.post("/query", response_model=QueryResponse, tags=["assistant"])  # POST route endpoint
 async def process_query(
-    request: dict,
+    request: QueryRequest,
     db: AsyncSession = Depends(get_db),
-) -> IntentResult:
-    """Kullanıcı sorgusunu analiz eder."""
-    query = request.get("query", "").strip()
-    if not query:
+) -> QueryResponse:
+    """
+    Kullanıcı sorgusunu RAG pipeline ile işler.
+    Intent detection → Vector search → DB retrieval → LLM yanıt
+    """
+    if not request.query.strip():
         raise HTTPException(status_code=400, detail="Sorgu boş olamaz.")
+
     try:
-        return await intent_detector.detect(query)
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="LLM servisi çalışmıyor.")
+        result = await rag_pipeline.run(
+            query=request.query,
+            db=db,
+            top_k=request.max_results,
+        )
+        return QueryResponse(
+            answer=result.answer,
+            intent=result.intent.intent.value,
+            products=[
+                ProductResult(
+                    product_id=p.product_id,
+                    name=p.name,
+                    brand=p.brand,
+                    price=p.price,
+                    similarity_score=round(p.similarity_score, 4),
+                )
+                for p in result.products
+            ],
+            total_found=result.total_found,
+        )
+    except Exception as e:
+        logger.exception("Query processing error")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 
 @router.get("/products", tags=["products"])  # GET route endpoint
