@@ -1,33 +1,23 @@
 """
-API route'ları — Modül 2 güncellemesi: LLM intent detection eklendi.
+API route'ları — Modül 3 güncellemesi: DB sağlık kontrolü eklendi.
 """
-from fastapi import APIRouter, HTTPException  # FastAPI bileşenleri
-from pydantic import BaseModel  # Veri şeması ve validasyon için
+from fastapi import APIRouter, Depends, HTTPException  # FastAPI bileşenleri
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text  # SQLAlchemy ORM bileşenleri
 import httpx  # Asenkron HTTP istemcisi
 
 from app.core.config import settings
+from app.db.session import get_db
 from app.llm.intent_detector import intent_detector
 from app.schemas.intent import IntentResult
-
 
 router = APIRouter()  # API yönlendirici oluşturur
 
 
-class HealthResponse(BaseModel):  # Sağlık durumu yanıt şeması
-    api: str
-    database: str
-    llm: str
-    vector_store: str
-
-
-class QueryRequest(BaseModel):  # Kullanıcı sorgu isteği şeması
-    query: str
-    max_results: int = 5
-
-
-@router.get("/health", response_model=HealthResponse, tags=["health"])  # GET route endpoint
-async def health_check() -> HealthResponse:
+@router.get("/health", tags=["health"])  # GET route endpoint
+async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
     """Sistem bileşenlerinin sağlık durumunu döner."""
+    # LLM kontrolü
     llm_status = "offline"
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
@@ -37,30 +27,56 @@ async def health_check() -> HealthResponse:
     except Exception:
         pass
 
-    return HealthResponse(
-        api="online",
-        database="not_connected",
-        llm=llm_status,
-        vector_store="not_initialized",
-    )
+    # Veritabanı kontrolü
+    db_status = "disconnected"
+    try:
+        await db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        pass
+
+    return {
+        "api": "online",
+        "database": db_status,
+        "llm": llm_status,
+        "vector_store": "not_initialized",
+    }
 
 
 @router.post("/query", response_model=IntentResult, tags=["assistant"])  # POST route endpoint
-async def process_query(request: QueryRequest) -> IntentResult:
-    """
-    Kullanıcı sorgusunu LLM ile analiz eder.
-    Intent ve filtreleri yapılandırılmış JSON olarak döner.
-    """
-    if not request.query.strip():
+async def process_query(
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+) -> IntentResult:
+    """Kullanıcı sorgusunu analiz eder."""
+    query = request.get("query", "").strip()
+    if not query:
         raise HTTPException(status_code=400, detail="Sorgu boş olamaz.")
-
     try:
-        result = await intent_detector.detect(request.query)
-        return result
+        return await intent_detector.detect(query)
     except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM servisi (Ollama) çalışmıyor. 'ollama serve' komutunu çalıştırın.",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM servisi çalışmıyor.")
+
+
+@router.get("/products", tags=["products"])  # GET route endpoint
+async def list_products(
+    db: AsyncSession = Depends(get_db),
+    limit: int = 10,
+    offset: int = 0,
+) -> dict:
+    """Ürünleri sayfalı olarak listeler."""
+    from sqlalchemy import select  # SQLAlchemy ORM bileşenleri
+    from app.db.models import Product
+
+    result = await db.execute(
+        select(Product).where(Product.is_active == True).limit(limit).offset(offset)
+    )
+    products = result.scalars().all()
+    return {
+        "items": [
+            {"id": str(p.id), "name": p.name, "brand": p.brand,
+             "price": p.price, "category": p.category}
+            for p in products
+        ],
+        "count": len(products),
+    }

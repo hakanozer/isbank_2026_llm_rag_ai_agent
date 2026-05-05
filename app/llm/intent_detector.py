@@ -63,7 +63,7 @@ class IntentDetector:
             IntentResult: Yapılandırılmış intent ve filtreler
         """
         logger.info("Intent detection başlatıldı: %s", query)
-
+        
         raw_response = await self._client.chat(
             messages=[
                 {"role": "system", "content": INTENT_SYSTEM_PROMPT},
@@ -71,6 +71,7 @@ class IntentDetector:
             ],
             temperature=0.0,  # Deterministik — her seferinde aynı çıktı
         )
+        
 
         logger.debug("Ham LLM yanıtı: %s", raw_response)
 
