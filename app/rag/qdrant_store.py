@@ -96,7 +96,6 @@ class ProductQdrantStore:
         except Exception:
             # if it's already a list
             qvec = list(query_vector)
-
         hits = self.client.search(
             collection_name=self.collection,
             query_vector=qvec,

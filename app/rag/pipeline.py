@@ -16,7 +16,7 @@ from app.schemas.intent import IntentResult
 
 logger = logging.getLogger(__name__)
 
-RAG_SYSTEM_PROMPT = """Sen AI Commerce Assistant'sın. Bir e-ticaret platformunun akıllı asistanısın.
+RAG_SYSTEM_PROMPT = """Kullanıcıya Türkçe yanıt ver, Sen AI Commerce Assistant'sın. Bir e-ticaret platformunun akıllı asistanısın.
 Sana kullanıcının sorusu ve veritabanından bulunan ürün bilgileri verilecek.
 Kullanıcıya nazik, samimi ve bilgilendirici bir dilde yanıt ver.
 Öneri yaparken neden bu ürünü önerdiğini açıkla.
