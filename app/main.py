@@ -8,6 +8,9 @@ from contextlib import asynccontextmanager  # Uygulama yaşam döngüsü yöneti
 
 from app.core.config import settings
 from app.api.routes import router
+from app.core.cache import cache as cache_service
+import logging
+from app.core.rate_limit import setup_rate_limiting
 
 
 @asynccontextmanager  # Asenkron bağlam yöneticisi
@@ -18,9 +21,18 @@ async def lifespan(app: FastAPI):
     print(f"   Ortam  : {settings.app_env}")
     print(f"   Debug  : {settings.debug}")
     print(f"   LLM    : {settings.ollama_model} @ {settings.ollama_base_url}")
+    # Redis (cache) bağlantısını kur
+    try:
+        await cache_service.connect()
+    except Exception as e:
+        logging.exception("Cache bağlanamadı: %s", e)
     yield
     # Kapanış
     print("🛑 Uygulama kapatılıyor...")
+    try:
+        await cache_service.disconnect()
+    except Exception:
+        pass
 
 
 app = FastAPI(  # FastAPI uygulama örneği
@@ -31,6 +43,12 @@ app = FastAPI(  # FastAPI uygulama örneği
     docs_url="/docs",       # Swagger UI
     redoc_url="/redoc",     # ReDoc UI
 )
+
+# Rate limiting (SlowAPI) must be configured before the application starts
+try:
+    setup_rate_limiting(app)
+except Exception:
+    logging.exception("Rate limiting setup failed")
 
 # CORS ayarları (geliştirme için tüm origin'lere izin)
 app.add_middleware(  # Ara katman yazılımı ekler

@@ -13,6 +13,8 @@ from app.llm.intent_detector import intent_detector
 from app.llm.ollama_client import ollama_client
 from app.rag.retriever import product_retriever, RetrievedProduct
 from app.schemas.intent import IntentResult
+from app.core.cache import cache
+from dataclasses import asdict
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,26 @@ class RAGPipeline:
         Returns:
             RAGResponse: Yanıt, intent ve bulunan ürünler
         """
-        # Adım 1: Intent detection
+        # Normalize input and check cache
         logger.info("RAG pipeline başlatıldı: %s", query)
+        cache_prefix = "rag_response"
+        normalized_query = query.strip().lower()
+        try:
+            cached = await cache.get(prefix=cache_prefix, query=normalized_query)
+            if cached:
+                logger.info("RAG cache HIT: %s", normalized_query)
+                intent = IntentResult.parse_obj(cached.get("intent"))
+                products = [RetrievedProduct(**p) for p in (cached.get("products") or [])]
+                return RAGResponse(
+                    answer=cached.get("answer", ""),
+                    intent=intent,
+                    products=products,
+                    total_found=int(cached.get("total_found", len(products))),
+                )
+        except Exception:
+            logger.exception("Cache okuma hatası")
+
+        # Adım 1: Intent detection
         intent = await intent_detector.detect(query)
         logger.info("Intent: %s, Filtreler: %s", intent.intent, intent.filters)
 
@@ -75,6 +95,19 @@ class RAGPipeline:
 
         # Adım 3: LLM ile yanıt üretimi
         answer = await self._generate_answer(query, products, intent)
+
+        # Cache write
+        try:
+            cache_value = {
+                "answer": answer,
+                "intent": intent.model_dump() if hasattr(intent, "model_dump") else intent.dict(),
+                "products": [asdict(p) for p in products],
+                "total_found": len(products),
+            }
+            await cache.set(prefix=cache_prefix, query=normalized_query, value=cache_value, ttl=3600)
+            logger.info("RAG response cache'e yazıldı: %s", normalized_query)
+        except Exception:
+            logger.exception("Cache yazma hatası")
 
         return RAGResponse(
             answer=answer,

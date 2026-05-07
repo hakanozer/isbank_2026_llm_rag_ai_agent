@@ -32,6 +32,9 @@ class Settings(BaseSettings):  # .env'den otomatik okuyan ayar sınıfı
 
     # FAISS
     vector_store_path: str = "./vector_store/products.faiss"
+    
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
 
     class Config:  # Pydantic iç yapılandırma sınıfı
         env_file = ".env"  # Ortam değişkenlerini .env'den yükler

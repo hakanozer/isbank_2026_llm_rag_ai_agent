@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List
 
 from langchain.agents import AgentExecutor, create_react_agent
@@ -16,6 +16,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain.memory import ConversationBufferWindowMemory
 
 from app.agent.tools import ALL_TOOLS
+from app.core.cache import cache
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,7 @@ class CommerceAgent:
         memory = ConversationBufferWindowMemory(
             k=5,
             memory_key="chat_history",
+            output_key="output",
             return_messages=False,
         )
 
@@ -398,6 +400,7 @@ class CommerceAgent:
             logger.info("Session süresi doldu, siliniyor: %s", sid)
             del self._sessions[sid]
 
+
     async def run(self, session_id: str, user_input: str) -> AgentResponse:
         """
         Belirli bir session için kullanıcı girdisini işler.
@@ -409,56 +412,121 @@ class CommerceAgent:
         Returns:
             AgentResponse: Yanıt ve kullanılan araçlar
         """
+
         session = self._get_or_create_session(session_id)
 
         logger.info("[%s] Agent çalışıyor: %s", session_id, user_input)
 
+        # ---------------------------------------------------
+        # CACHE KEY
+        # ---------------------------------------------------
+        cache_prefix = "agent_response"
+
+        # Kullanıcı inputunu normalize et
+        normalized_input = user_input.strip().lower()
+
+        # ---------------------------------------------------
+        # CACHE CHECK
+        # ---------------------------------------------------
         try:
-            result = await session.executor.ainvoke({"input": user_input})
+            cached_response = await cache.get(
+                prefix=cache_prefix,
+                query=normalized_input,
+            )
+
+            if cached_response:
+                logger.info("[%s] Cache HIT", session_id)
+                return AgentResponse(**cached_response)
+
+        except Exception as e:
+            logger.warning("[%s] Cache read hatası: %s", session_id, e)
+
+        # ---------------------------------------------------
+        # LLM EXECUTION
+        # ---------------------------------------------------
+        try:
+            result = await session.executor.ainvoke(
+                {"input": user_input}
+            )
+
         except Exception as e:
             logger.exception("[%s] Agent hatası: %s", session_id, e)
+
             return AgentResponse(
                 answer="Üzgünüm, isteğinizi işlerken bir hata oluştu. Lütfen tekrar deneyin.",
             )
 
+        # ---------------------------------------------------
+        # TOOL PARSE
+        # ---------------------------------------------------
         tools_used = []
         steps = []
+
         for action, observation in result.get("intermediate_steps", []):
             tools_used.append(action.tool)
+
             steps.append({
                 "tool": action.tool,
                 "input": action.tool_input,
                 "output": str(observation)[:200],
             })
 
-        # Iteration / time limit durumunda output boş ya da hata mesajı olabilir.
-        # Bu durumda intermediate_steps'teki son anlamlı gözlemi fallback olarak kullan.
+        # ---------------------------------------------------
+        # OUTPUT HANDLING
+        # ---------------------------------------------------
         answer = result.get("output", "").strip()
+
         LIMIT_MARKERS = (
             "agent stopped due to iteration limit",
             "agent stopped due to time limit",
         )
+
         if not answer or any(m in answer.lower() for m in LIMIT_MARKERS):
+
             logger.warning(
-                "[%s] Iteration/time limit aşıldı, son gözlem fallback olarak kullanılıyor.",
+                "[%s] Iteration/time limit aşıldı, fallback çalıştı.",
                 session_id,
             )
-            # intermediate_steps'ten son araç çıktısını al
+
             if steps:
                 last_observation = steps[-1]["output"]
+
                 answer = (
-                    f"İsteğinizi tam olarak tamamlayamadım ancak bulduklarım şunlar:\n\n"
+                    "İsteğinizi tam olarak tamamlayamadım ancak "
+                    "bulduklarım şunlar:\n\n"
                     f"{last_observation}"
                 )
-            else:
-                answer = "Üzgünüm, isteğinizi işlerken yeterli adım tamamlanamadı. Lütfen sorunuzu daha açık belirtin."
 
-        return AgentResponse(
+            else:
+                answer = (
+                    "Üzgünüm, isteğinizi işlerken yeterli adım "
+                    "tamamlanamadı. Lütfen sorunuzu daha açık belirtin."
+                )
+
+        response = AgentResponse(
             answer=answer,
             steps=steps,
             tools_used=list(set(tools_used)),
             intent=detect_intent(user_input),
         )
+
+        # ---------------------------------------------------
+        # CACHE WRITE
+        # ---------------------------------------------------
+        try:
+            await cache.set(
+                prefix=cache_prefix,
+                query=normalized_input,
+                value=asdict(response),
+                ttl=3600,
+            )
+
+            logger.info("[%s] Response cache'e yazıldı", session_id)
+
+        except Exception as e:
+            logger.warning("[%s] Cache write hatası: %s", session_id, e)
+
+        return response
 
     def clear_session(self, session_id: str) -> bool:
         """Belirli bir session'ı ve geçmişini siler."""

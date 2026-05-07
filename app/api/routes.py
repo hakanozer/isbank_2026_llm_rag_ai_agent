@@ -4,7 +4,7 @@ API route'ları — Session tabanlı Agent entegrasyonu.
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.rag.pipeline import rag_pipeline
 from app.rag.vector_store import vector_store
 from app.agent.planner import commerce_agent
+from app.core.rate_limit import session_rate_limiter, limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -109,19 +110,21 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @router.post("/query", response_model=QueryResponse, tags=["assistant"])
+@limiter.limit("10/minute")
 async def process_query(
-    request: QueryRequest,
+    request: Request,
+    payload: QueryRequest,
     db: AsyncSession = Depends(get_db),
 ) -> QueryResponse:
     """Kullanıcı sorgusunu RAG pipeline ile işler (session'sız, stateless)."""
-    if not request.query.strip():
+    if not payload.query.strip():
         raise HTTPException(status_code=400, detail="Sorgu boş olamaz.")
 
     try:
         result = await rag_pipeline.run(
-            query=request.query,
+            query=payload.query,
             db=db,
-            top_k=request.max_results,
+            top_k=payload.max_results,
         )
         return QueryResponse(
             answer=result.answer,
@@ -187,7 +190,7 @@ async def start_session() -> SessionStartResponse:
     return SessionStartResponse(session_id=session_id)
 
 
-@router.post("/agent/query", response_model=AgentQueryResponse, tags=["agent"])
+@router.post("/agent/query", response_model=AgentQueryResponse, tags=["agent"], dependencies=[Depends(session_rate_limiter)])
 async def agent_query(request: AgentQueryRequest) -> AgentQueryResponse:
     """
     Mevcut bir oturumda kullanıcı sorusunu agent'a iletir.
@@ -224,7 +227,7 @@ async def agent_query(request: AgentQueryRequest) -> AgentQueryResponse:
     )
 
 
-@router.delete("/agent/session/{session_id}", response_model=SessionDeleteResponse, tags=["agent"])
+@router.delete("/agent/session/{session_id}", response_model=SessionDeleteResponse, tags=["agent"], dependencies=[Depends(session_rate_limiter)])
 async def delete_session(session_id: str) -> SessionDeleteResponse:
     """
     Belirli bir oturumu ve konuşma geçmişini siler.
