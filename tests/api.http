@@ -17,10 +17,6 @@ Content-Type: application/json
   "max_results": 5
 }
 
-### Ürün listesi
-GET http://localhost:8000/api/v1/products?limit=10&offset=0
-
-
 ###############################################################
 # Agent API — Session tabanlı çok turlu konuşma
 # Akış: 1) session aç  2) query gönder (tekrar tekrar)  3) session sil
@@ -36,8 +32,8 @@ POST http://localhost:8000/api/v1/agent/query
 Content-Type: application/json
 
 {
-  "session_id": "3fabf135-2f80-4a01-940d-2023f49eb3cf",
-  "query": "terletmeyen spor ayakkabı öner"
+  "session_id": "309e7aad-9638-4a6a-8cec-a9ebac29e3af",
+  "query": "1000 TL altı terletmeyen spor ayakkabı öner"
 }
 
 ### ADIM 2b — İkinci soru (aynı session_id ile; agent önceki bağlamı hatırlar)
@@ -68,4 +64,4 @@ Content-Type: application/json
 }
 
 ### ADIM 3 — Oturumu kapat / geçmişi temizle
-DELETE http://localhost:8000/api/v1/agent/session/3fabf135-2f80-4a01-940d-2023f49eb3cf
+DELETE http://localhost:8000/api/v1/agent/session/22695fcd-aae4-4218-8487-aae01d348f67
