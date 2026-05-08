@@ -13,7 +13,7 @@ POST http://localhost:8000/api/v1/query
 Content-Type: application/json
 
 {
-  "query": "700 TL ve altı Spor ayakkabısı öner",
+  "query": "1000 tl altı spor ayakkabıları getir",
   "max_results": 5
 }
 

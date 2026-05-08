@@ -2,15 +2,23 @@
 AI Commerce Assistant — FastAPI giriş noktası.
 Tüm route'lar, middleware ve lifecycle eventler buradan yönetilir.
 """
+import structlog
 from fastapi import FastAPI  # Ana uygulama sınıfı
 from fastapi.middleware.cors import CORSMiddleware  # CORS politikasını yönetir
 from contextlib import asynccontextmanager  # Uygulama yaşam döngüsü yönetimi
 
 from app.core.config import settings
+from app.core.logging_config import setup_logging
 from app.api.routes import router
 from app.core.cache import cache as cache_service
-import logging
 from app.core.rate_limit import setup_rate_limiting
+
+setup_logging(
+    settings.log_level,
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+)
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager  # Asenkron bağlam yöneticisi
@@ -25,7 +33,7 @@ async def lifespan(app: FastAPI):
     try:
         await cache_service.connect()
     except Exception as e:
-        logging.exception("Cache bağlanamadı: %s", e)
+        logger.exception("cache_connect_failed", error=str(e))
     yield
     # Kapanış
     print("🛑 Uygulama kapatılıyor...")
@@ -48,7 +56,7 @@ app = FastAPI(  # FastAPI uygulama örneği
 try:
     setup_rate_limiting(app)
 except Exception:
-    logging.exception("Rate limiting setup failed")
+    logger.exception("rate_limit_setup_failed")
 
 # CORS ayarları (geliştirme için tüm origin'lere izin)
 app.add_middleware(  # Ara katman yazılımı ekler

@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import hashlib  # Kriptografik özet fonksiyonları
 import json  # JSON okuma/yazma işlemleri
-import logging  # Uygulama loglama
 from typing import Any  # Tip ipuçları için
 
 import redis.asyncio as aioredis
+import structlog
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 DEFAULT_TTL = 3600  # 1 saat
 
@@ -33,13 +33,13 @@ class CacheService:
             decode_responses=True,
         )
         await self._redis.ping()
-        logger.info("Redis bağlantısı kuruldu: %s", self._url)
+        logger.info("redis_connected", redis_url=self._url)
 
     async def disconnect(self) -> None:
         """Redis bağlantısını kapatır."""
         if self._redis:
             await self._redis.aclose()
-            logger.info("Redis bağlantısı kapatıldı: %s", self._url)
+            logger.info("redis_disconnected", redis_url=self._url)
             self._redis = None
             
     def _make_key(self, prefix: str, data: str) -> str:
@@ -56,10 +56,10 @@ class CacheService:
         try:
             raw = await self._redis.get(key)
             if raw:
-                logger.debug("Cache HIT: %s", key)
+                logger.debug("cache_hit", key=key, prefix=prefix)
                 return json.loads(raw)
         except Exception as e:
-            logger.warning("Cache get hatası: %s", e)
+            logger.warning("cache_get_failed", key=key, prefix=prefix, error=str(e))
         return None
     
     
@@ -76,9 +76,9 @@ class CacheService:
         key = self._make_key(prefix, query)
         try:
             await self._redis.setex(key, ttl, json.dumps(value, ensure_ascii=False))
-            logger.debug("Cache SET: %s (TTL: %ds)", key, ttl)
+            logger.debug("cache_set", key=key, prefix=prefix, ttl=ttl)
         except Exception as e:
-            logger.warning("Cache set hatası: %s", e)
+            logger.warning("cache_set_failed", key=key, prefix=prefix, ttl=ttl, error=str(e))
             self._redis = None
 
     async def invalidate(self, prefix: str) -> int:

@@ -4,19 +4,19 @@ Intent → Retrieval → LLM → Yanıt
 """
 from __future__ import annotations
 
-import logging  # Uygulama loglama
 from dataclasses import dataclass  # Veri sınıfı tanımı için
+from dataclasses import asdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
 
+from app.core.cache import cache
 from app.llm.intent_detector import intent_detector
 from app.llm.ollama_client import ollama_client
 from app.rag.retriever import product_retriever, RetrievedProduct
 from app.schemas.intent import IntentResult
-from app.core.cache import cache
-from dataclasses import asdict
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 RAG_SYSTEM_PROMPT = """Kullanıcıya Türkçe yanıt ver, Sen AI Commerce Assistant'sın. Bir e-ticaret platformunun akıllı asistanısın.
 Sana kullanıcının sorusu ve veritabanından bulunan ürün bilgileri verilecek.
@@ -62,13 +62,13 @@ class RAGPipeline:
             RAGResponse: Yanıt, intent ve bulunan ürünler
         """
         # Normalize input and check cache
-        logger.info("RAG pipeline başlatıldı: %s", query)
+        logger.info("rag_pipeline_started", query=query, top_k=top_k)
         cache_prefix = "rag_response"
         normalized_query = query.strip().lower()
         try:
             cached = await cache.get(prefix=cache_prefix, query=normalized_query)
             if cached:
-                logger.info("RAG cache HIT: %s", normalized_query)
+                logger.info("rag_cache_hit", query=normalized_query, cache_prefix=cache_prefix)
                 intent = IntentResult.parse_obj(cached.get("intent"))
                 products = [RetrievedProduct(**p) for p in (cached.get("products") or [])]
                 return RAGResponse(
@@ -77,12 +77,17 @@ class RAGPipeline:
                     products=products,
                     total_found=int(cached.get("total_found", len(products))),
                 )
-        except Exception:
-            logger.exception("Cache okuma hatası")
+        except Exception as e:
+            logger.exception(
+                "rag_cache_read_failed",
+                query=normalized_query,
+                cache_prefix=cache_prefix,
+                error=str(e),
+            )
 
         # Adım 1: Intent detection
         intent = await intent_detector.detect(query)
-        logger.info("Intent: %s, Filtreler: %s", intent.intent, intent.filters)
+        logger.info("intent_detected", intent=str(intent.intent), filters=intent.filters)
 
         # Adım 2: Retrieval
         products = await product_retriever.retrieve(
@@ -91,7 +96,7 @@ class RAGPipeline:
             db=db,
             top_k=top_k,
         )
-        logger.info("%d ürün bulundu", len(products))
+        logger.info("retrieval_completed", product_count=len(products), top_k=top_k)
 
         # Adım 3: LLM ile yanıt üretimi
         answer = await self._generate_answer(query, products, intent)
@@ -105,9 +110,14 @@ class RAGPipeline:
                 "total_found": len(products),
             }
             await cache.set(prefix=cache_prefix, query=normalized_query, value=cache_value, ttl=3600)
-            logger.info("RAG response cache'e yazıldı: %s", normalized_query)
-        except Exception:
-            logger.exception("Cache yazma hatası")
+            logger.info("rag_cache_written", query=normalized_query, cache_prefix=cache_prefix, ttl=3600)
+        except Exception as e:
+            logger.exception(
+                "rag_cache_write_failed",
+                query=normalized_query,
+                cache_prefix=cache_prefix,
+                error=str(e),
+            )
 
         return RAGResponse(
             answer=answer,

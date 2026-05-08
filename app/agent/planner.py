@@ -4,11 +4,11 @@ Intent tabanlı tool seçimi + session yönetimi.
 """
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List
 
+import structlog
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.tools import BaseTool
 from langchain_community.llms import Ollama
@@ -19,7 +19,7 @@ from app.agent.tools import ALL_TOOLS
 from app.core.cache import cache
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Intent → Tool eşlemesi
@@ -59,7 +59,7 @@ def select_tools(query: str) -> List[BaseTool]:
     intent = detect_intent(query)
     tool_names = INTENT_TOOL_MAP.get(intent, INTENT_TOOL_MAP["default"])
     selected = [t for t in ALL_TOOLS if t.name in tool_names]
-    logger.info("Intent: %s → Seçilen tool'lar: %s", intent, tool_names)
+    logger.info("tools_selected", intent=intent, tool_names=tool_names)
     return selected
 
 
@@ -171,7 +171,7 @@ class CommerceAgent:
     def _get_or_create_session(self, session_id: str) -> SessionData:
         self._evict_expired_sessions()
         if session_id not in self._sessions:
-            logger.info("Yeni session: %s", session_id)
+            logger.info("session_created", session_id=session_id)
             self._sessions[session_id] = SessionData(
                 memory=ConversationBufferWindowMemory(
                     k=5,
@@ -188,7 +188,7 @@ class CommerceAgent:
         now = time.time()
         expired = [sid for sid, s in self._sessions.items() if now - s.last_used > self.SESSION_TTL]
         for sid in expired:
-            logger.info("Session TTL doldu, siliniyor: %s", sid)
+            logger.info("session_evicted_ttl", session_id=sid)
             del self._sessions[sid]
 
     def _extract_answer_from_steps(self, steps: list[dict]) -> str | None:
@@ -205,15 +205,20 @@ class CommerceAgent:
         intent = detect_intent(user_input)
         tools = select_tools(user_input)
 
-        logger.info("[%s] intent=%s tools=%s sorgu=%s",
-                    session_id, intent, [t.name for t in tools], user_input)
+        logger.info(
+            "agent_run_started",
+            session_id=session_id,
+            intent=intent,
+            tools=[t.name for t in tools],
+            query=user_input,
+        )
 
         executor = self._build_executor(tools, session.memory)
 
         try:
             result = await executor.ainvoke({"input": user_input})
         except Exception as e:
-            logger.exception("[%s] Agent hatası", session_id)
+            logger.exception("agent_run_failed", session_id=session_id, error=str(e))
             return AgentResponse(answer="Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.", intent=intent)
 
         # Adımları derle — None ve hata adımlarını filtrele
@@ -237,7 +242,7 @@ class CommerceAgent:
             "agent stopped due to time limit",
         )
         if not answer or any(m in answer.lower() for m in STOP_MARKERS):
-            logger.warning("[%s] Limit aşıldı, fallback devrede.", session_id)
+            logger.warning("agent_fallback_triggered", session_id=session_id)
             fallback = self._extract_answer_from_steps(steps)
             if fallback:
                 answer = f"Araştırdım, bulduklarım şunlar:\n\n{fallback}"
@@ -254,7 +259,7 @@ class CommerceAgent:
     def clear_session(self, session_id: str) -> bool:
         if session_id in self._sessions:
             del self._sessions[session_id]
-            logger.info("Session silindi: %s", session_id)
+            logger.info("session_deleted", session_id=session_id)
             return True
         return False
 
@@ -382,7 +387,7 @@ class CommerceAgent:
         self._evict_expired_sessions()
 
         if session_id not in self._sessions:
-            logger.info("Yeni session oluşturuluyor: %s", session_id)
+            logger.info("session_created", session_id=session_id)
             self._sessions[session_id] = self._build_session()
 
         session = self._sessions[session_id]
@@ -397,7 +402,7 @@ class CommerceAgent:
             if now - s.last_used > self.SESSION_TTL
         ]
         for sid in expired:
-            logger.info("Session süresi doldu, siliniyor: %s", sid)
+            logger.info("session_evicted_ttl", session_id=sid)
             del self._sessions[sid]
 
 
@@ -415,7 +420,7 @@ class CommerceAgent:
 
         session = self._get_or_create_session(session_id)
 
-        logger.info("[%s] Agent çalışıyor: %s", session_id, user_input)
+        logger.info("agent_run_started", session_id=session_id, query=user_input)
 
         # ---------------------------------------------------
         # CACHE KEY
@@ -435,11 +440,11 @@ class CommerceAgent:
             )
 
             if cached_response:
-                logger.info("[%s] Cache HIT", session_id)
+                logger.info("agent_cache_hit", session_id=session_id, cache_prefix=cache_prefix)
                 return AgentResponse(**cached_response)
 
         except Exception as e:
-            logger.warning("[%s] Cache read hatası: %s", session_id, e)
+            logger.warning("agent_cache_read_failed", session_id=session_id, cache_prefix=cache_prefix, error=str(e))
 
         # ---------------------------------------------------
         # LLM EXECUTION
@@ -450,7 +455,7 @@ class CommerceAgent:
             )
 
         except Exception as e:
-            logger.exception("[%s] Agent hatası: %s", session_id, e)
+            logger.exception("agent_run_failed", session_id=session_id, error=str(e))
 
             return AgentResponse(
                 answer="Üzgünüm, isteğinizi işlerken bir hata oluştu. Lütfen tekrar deneyin.",
@@ -483,10 +488,7 @@ class CommerceAgent:
 
         if not answer or any(m in answer.lower() for m in LIMIT_MARKERS):
 
-            logger.warning(
-                "[%s] Iteration/time limit aşıldı, fallback çalıştı.",
-                session_id,
-            )
+            logger.warning("agent_fallback_triggered", session_id=session_id)
 
             if steps:
                 last_observation = steps[-1]["output"]
@@ -521,10 +523,10 @@ class CommerceAgent:
                 ttl=3600,
             )
 
-            logger.info("[%s] Response cache'e yazıldı", session_id)
+            logger.info("agent_cache_written", session_id=session_id, cache_prefix=cache_prefix, ttl=3600)
 
         except Exception as e:
-            logger.warning("[%s] Cache write hatası: %s", session_id, e)
+            logger.warning("agent_cache_write_failed", session_id=session_id, cache_prefix=cache_prefix, error=str(e))
 
         return response
 
@@ -532,7 +534,7 @@ class CommerceAgent:
         """Belirli bir session'ı ve geçmişini siler."""
         if session_id in self._sessions:
             del self._sessions[session_id]
-            logger.info("Session silindi: %s", session_id)
+            logger.info("session_deleted", session_id=session_id)
             return True
         return False
 

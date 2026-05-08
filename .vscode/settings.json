@@ -1,0 +1,12 @@
+{
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+
+    "coverage-gutters.showLineCoverage": true,
+    "coverage-gutters.showGutterCoverage": true,
+    "coverage-gutters.showRulerCoverage": true,
+
+    "python.testing.pytestArgs": [
+        "tests"
+    ]
+}

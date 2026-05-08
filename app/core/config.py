@@ -14,6 +14,7 @@ class Settings(BaseSettings):  # .env'den otomatik okuyan ayar sınıfı
     app_env: str = "development"
     debug: bool = True
     port: int = 8000
+    log_level: str = "INFO"
 
     # PostgreSQL
     postgres_user: str = "aicommerce"
@@ -35,6 +36,10 @@ class Settings(BaseSettings):  # .env'den otomatik okuyan ayar sınıfı
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+
+    # Log forwarding (opsiyonel)
+    logstash_host: str = ""
+    logstash_port: int = 5514
 
     class Config:  # Pydantic iç yapılandırma sınıfı
         env_file = ".env"  # Ortam değişkenlerini .env'den yükler

@@ -2,7 +2,7 @@
 API route'ları — Session tabanlı Agent entegrasyonu.
 """
 import uuid
-import logging
+import structlog
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -17,7 +17,7 @@ from app.rag.vector_store import vector_store
 from app.agent.planner import commerce_agent
 from app.core.rate_limit import session_rate_limiter, limiter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
@@ -142,7 +142,12 @@ async def process_query(
             total_found=result.total_found,
         )
     except Exception as e:
-        logger.exception("Query processing error")
+        logger.exception(
+            "query_processing_failed",
+            query=payload.query,
+            max_results=payload.max_results,
+            error=str(e),
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -183,10 +188,11 @@ async def start_session() -> SessionStartResponse:
     Her session kendi konuşma geçmişini bağımsız olarak saklar.
     Session'lar 30 dakika kullanılmazsa otomatik silinir.
     """
+    
     session_id = str(uuid.uuid4())
     # Session'ı lazy oluşturuyoruz; ilk query geldiğinde kurulacak.
     # Şimdilik sadece benzersiz bir ID dönüyoruz.
-    logger.info("Yeni session ID üretildi: %s", session_id)
+    logger.info("session_id_generated", session_id=session_id)
     return SessionStartResponse(session_id=session_id)
 
 
@@ -214,7 +220,12 @@ async def agent_query(request: AgentQueryRequest) -> AgentQueryResponse:
             user_input=request.query,
         )
     except Exception as e:
-        logger.exception("[%s] Agent query hatası", request.session_id)
+        logger.exception(
+            "agent_query_failed",
+            session_id=request.session_id,
+            query=request.query,
+            error=str(e),
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
     return AgentQueryResponse(
