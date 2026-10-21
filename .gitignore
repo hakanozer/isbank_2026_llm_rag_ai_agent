@@ -30,3 +30,4 @@ vector_store/*.faiss
 .pytest_cache/
 htmlcov/
 .coverage
+.DS_Store
